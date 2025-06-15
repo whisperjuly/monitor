@@ -7,6 +7,8 @@ import time
 import psutil
 import threading
 import gzip
+import platform
+import subprocess
 from datetime import datetime
 
 
@@ -35,6 +37,190 @@ class SystemMonitor:
         except Exception as e:
             print(f"压缩数据时出错: {e}")
             return data
+
+    def get_cpu_info(self):
+        """获取CPU信息"""
+        try:
+            cpu_info = {}
+
+            # CPU型号
+            if platform.system() == "Windows":
+                try:
+                    result = subprocess.run(['wmic', 'cpu', 'get', 'name'],
+                                            capture_output=True, text=True, timeout=5)
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) > 1:
+                        cpu_info['model'] = lines[1].strip()
+                    else:
+                        cpu_info['model'] = "Unknown"
+                except:
+                    cpu_info['model'] = "Unknown"
+            else:
+                # Linux/Unix系统
+                try:
+                    with open('/proc/cpuinfo', 'r') as f:
+                        for line in f:
+                            if 'model name' in line:
+                                cpu_info['model'] = line.split(':')[1].strip()
+                                break
+                        else:
+                            cpu_info['model'] = "Unknown"
+                except:
+                    cpu_info['model'] = "Unknown"
+
+            # CPU核心数
+            cpu_info['physicalCores'] = psutil.cpu_count(logical=False)
+            cpu_info['logicalCores'] = psutil.cpu_count(logical=True)
+
+            # CPU频率
+            try:
+                cpu_freq = psutil.cpu_freq()
+                if cpu_freq:
+                    cpu_info['maxFrequency'] = cpu_freq.max
+                    cpu_info['minFrequency'] = cpu_freq.min
+                    cpu_info['currentFrequency'] = cpu_freq.current
+                else:
+                    cpu_info['maxFrequency'] = None
+                    cpu_info['minFrequency'] = None
+                    cpu_info['currentFrequency'] = None
+            except:
+                cpu_info['maxFrequency'] = None
+                cpu_info['minFrequency'] = None
+                cpu_info['currentFrequency'] = None
+
+            return cpu_info
+        except Exception as e:
+            print(f"获取CPU信息时出错: {e}")
+            return {"model": "Unknown", "physicalCores": None, "logicalCores": None}
+
+    def get_memory_info(self):
+        """获取内存信息"""
+        try:
+            memory_info = {}
+
+            # 基本内存信息
+            memory = psutil.virtual_memory()
+            memory_info['totalSize'] = memory.total
+            memory_info['totalSizeGb'] = round(memory.total / (1024 ** 3), 2)
+
+            # 尝试获取内存频率（主要在Linux系统上有效）
+            memory_frequency = None
+            if platform.system() == "Linux":
+                try:
+                    result = subprocess.run(['dmidecode', '-t', 'memory'],
+                                            capture_output=True, text=True, timeout=5)
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if 'Speed:' in line and 'MHz' in line:
+                            memory_frequency = line.split(':')[1].strip()
+                            break
+                except:
+                    pass
+            elif platform.system() == "Windows":
+                try:
+                    result = subprocess.run(['wmic', 'memorychip', 'get', 'speed'],
+                                            capture_output=True, text=True, timeout=5)
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) > 1 and lines[1].strip():
+                        memory_frequency = f"{lines[1].strip()} MHz"
+                except:
+                    pass
+
+            memory_info['frequency'] = memory_frequency if memory_frequency else "Unknown"
+
+            return memory_info
+        except Exception as e:
+            print(f"获取内存信息时出错: {e}")
+            return {"total_size": None, "total_size_gb": None, "frequency": "Unknown"}
+
+    def get_network_interfaces(self):
+        """获取网卡信息"""
+        try:
+            interfaces = []
+            net_if_addrs = psutil.net_if_addrs()
+            net_if_stats = psutil.net_if_stats()
+
+            for interface_name, addresses in net_if_addrs.items():
+                interface_info = {
+                    "name": interface_name,
+                    "addresses": [],
+                    "isUp": False,
+                    "speed": None
+                }
+
+                # 获取地址信息
+                for addr in addresses:
+                    addr_info = {
+                        "family": str(addr.family),
+                        "address": addr.address,
+                        "netmask": addr.netmask,
+                        "broadcast": addr.broadcast
+                    }
+                    interface_info["addresses"].append(addr_info)
+
+                # 获取接口状态和速度
+                if interface_name in net_if_stats:
+                    stats = net_if_stats[interface_name]
+                    interface_info["isUp"] = stats.isup
+                    interface_info["speed"] = stats.speed
+
+                interfaces.append(interface_info)
+
+            return interfaces
+        except Exception as e:
+            print(f"获取网卡信息时出错: {e}")
+            return []
+
+    def get_os_info(self):
+        """获取操作系统信息"""
+        try:
+            os_info = {
+                "system": platform.system(),
+                "release": platform.release(),
+                "version": platform.version(),
+                "machine": platform.machine(),
+                "processor": platform.processor(),
+                "platform": platform.platform(),
+                "pythonVersion": platform.python_version()
+            }
+
+            # 获取更详细的系统信息
+            try:
+                if platform.system() == "Linux":
+                    with open('/etc/os-release', 'r') as f:
+                        for line in f:
+                            if line.startswith('PRETTY_NAME='):
+                                os_info['pretty_name'] = line.split('=')[1].strip().strip('"')
+                                break
+                elif platform.system() == "Windows":
+                    os_info['prettyName'] = f"Windows {platform.release()}"
+                else:
+                    os_info['prettyName'] = platform.platform()
+            except:
+                os_info['prettyName'] = platform.platform()
+
+            return os_info
+        except Exception as e:
+            print(f"获取操作系统信息时出错: {e}")
+            return {"system": "Unknown"}
+
+    def get_host_info(self):
+        """获取主机基本信息"""
+        try:
+            host_info = {
+                "message_type": "host_info",
+                "timestamp": datetime.now().isoformat(),
+                "hostname": platform.node(),
+                "cpu": self.get_cpu_info(),
+                "memory": self.get_memory_info(),
+                "networkInterfaces": self.get_network_interfaces(),
+                "operatingSystem": self.get_os_info()
+            }
+
+            return host_info
+        except Exception as e:
+            print(f"获取主机信息时出错: {e}")
+            return None
 
     def get_system_info(self):
         """获取系统信息"""
@@ -119,6 +305,7 @@ class SystemMonitor:
 
             # 组装完整的系统信息
             system_data = {
+                "message_type": "system_info",
                 "timestamp": timestamp,
                 "cpu_percent": cpu_percent,
                 "memory": memory_info,
@@ -163,11 +350,30 @@ class SystemMonitor:
             print(f"发送数据时出错: {e}")
             return False
 
+    def send_host_info(self):
+        """发送主机基本信息"""
+        print("正在获取并发送主机基本信息...")
+        host_info = self.get_host_info()
+        print(host_info)
+
+
+        if host_info:
+            if self.send_data(host_info):
+                print("主机基本信息发送成功")
+                return True
+            else:
+                print("主机基本信息发送失败")
+                return False
+        else:
+            print("获取主机基本信息失败")
+            return False
+
     def monitor_loop(self):
         """监控循环"""
         print("开始监控系统信息...")
         while self.running:
             # 获取系统信息
+            time.sleep(5)
             system_info = self.get_system_info()
 
             if system_info:
@@ -181,6 +387,13 @@ class SystemMonitor:
 
     def start_monitoring(self):
         """开始监控"""
+        # 首先发送主机基本信息
+        if not self.send_host_info():
+            print("发送主机基本信息失败，无法启动监控")
+            return None
+
+
+        # 启动监控循环
         self.running = True
         monitor_thread = threading.Thread(target=self.monitor_loop)
         monitor_thread.daemon = True
@@ -232,8 +445,12 @@ def main():
     if not monitor.connect_to_server(ip_address, port):
         return
 
-    # 开始监控
+    # 开始监控（会先发送主机信息）
     monitor_thread = monitor.start_monitoring()
+
+    if not monitor_thread:
+        print("启动监控失败")
+        return
 
     try:
         print("监控已开始，按 Ctrl+C 停止...")
